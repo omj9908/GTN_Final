@@ -652,11 +652,18 @@ async function buyItem(itemId) {
         console.log("🔍 서버 응답:", data);
 
         if (data.success) {
-            await loadPurchaseHistory();
-            await displayDices(); // ✅ UI 업데이트 실행
+            let purchasedSkins = JSON.parse(localStorage.getItem("purchasedSkins")) || [];
+            if (!purchasedSkins.includes(itemId)) {
+                purchasedSkins.push(itemId);
+                localStorage.setItem("purchasedSkins", JSON.stringify(purchasedSkins));
+            }
 
-            // ✅ 버튼 텍스트 변경 (구매하기 → 장착하기)
-            const button = document.querySelector(`[data-item-id="${itemId}"]`);
+            await loadPurchaseHistory();
+            await displayDices();
+            await updateSkinButtons();  // ✅ 버튼 상태 업데이트 추가
+
+            // ✅ 버튼 직접 수정 (구매하기 → 장착하기)
+            const button = document.getElementById(`skin-btn-${itemId}`);
             if (button) {
                 button.textContent = "장착하기";
                 button.setAttribute("onclick", `equipSkin(${itemId})`);
@@ -669,9 +676,6 @@ async function buyItem(itemId) {
         alert("구매 실패: " + error.message);
     }
 }
-
-
-
 
 
 if (typeof window.displayDices === "undefined") {
@@ -898,69 +902,49 @@ function loadEquippedItems() {
     }
 }
 
-// ✅ 게임 실행 시 장착된 주사위와 맵 로드
 window.onload = async function () {
-    loadEquippedItems();
+    await connectWallet();
+    await loadPurchaseHistory(); // ✅ 구매 내역 불러오기
+    await displayDices(); // ✅ 주사위 리스트 업데이트
+    await updateSkinButtons(); // ✅ 버튼 상태 업데이트
 };
+
+function updatePurchaseHistoryUI(purchasedTitles) {
+    const purchaseList = document.getElementById("purchaseList");
+    purchaseList.innerHTML = "";
+
+    if (!purchasedTitles || purchasedTitles.length === 0) {
+        purchaseList.innerHTML = "<li>구매 내역이 없습니다.</li>";
+    } else {
+        purchasedTitles.forEach(title => {
+            const listItem = document.createElement("li");
+            listItem.textContent = `🎲 구매한 스킨: ${title}`;
+            purchaseList.appendChild(listItem);
+        });
+    }
+}
 
 
 async function updateSkinButtons() {
     console.log("🔄 스킨 버튼 업데이트 시작");
 
-    let walletAddress;
-    try {
-        walletAddress = (await signer.getAddress()).toLowerCase();
-    } catch (error) {
-        console.error("🚨 walletAddress 가져오기 실패:", error);
-        return;
-    }
+    let purchasedSkins = JSON.parse(localStorage.getItem("purchasedSkins")) || [];
+    console.log("✅ 구매한 스킨 목록:", purchasedSkins);
 
-    // ✅ API 경로 확인 (존재하는 경로로 변경해야 함)
-    let apiUrl = "http://localhost:3000/api/get-purchased-skins"; // 서버에서 확인 필요
-    let purchasedSkins = [];
-
-    try {
-        const response = await fetch(apiUrl, {
-            method: "POST",
-            headers: { "Content-Type": "application/json" },
-            body: JSON.stringify({ walletAddress }),
-        });
-
-        if (!response.ok) {
-            throw new Error(`HTTP 오류! 상태 코드: ${response.status}`);
-        }
-
-        const purchasedData = await response.json();
-        console.log("📦 구매한 스킨 데이터:", purchasedData);
-
-        if (!purchasedData.success) {
-            console.error("🚨 구매한 스킨을 가져오지 못했습니다:", purchasedData.message);
-            return;
-        }
-
-        purchasedSkins = purchasedData.purchasedSkins || [];
-    } catch (error) {
-        console.error(`🚨 구매한 스킨 API 호출 실패: ${error.message}`);
-        return;
-    }
-
-    // ✅ 현재 장착된 스킨 불러오기
     const equippedSkins = JSON.parse(localStorage.getItem("equippedSkins")) || [];
     console.log("🎭 현재 장착된 스킨:", equippedSkins);
 
     // ✅ 모든 스킨 버튼을 업데이트
     document.querySelectorAll("[id^='skin-btn-']").forEach(button => {
-        const skinId = parseInt(button.getAttribute("data-skin-id"));
+        const skinId = parseInt(button.getAttribute("data-item-id"));
 
         if (isNaN(skinId)) {
             console.error(`🚨 버튼에 연결된 잘못된 skinId: ${skinId}`);
             return;
         }
 
-        // ✅ 구매한 스킨인지 확인
         if (purchasedSkins.includes(skinId)) {
-            // 현재 장착된 스킨이면 "장착 해제", 아니면 "장착하기" 버튼 표시
-            if (equippedSkins.length > 0 && equippedSkins[0].id === skinId) {
+            if (equippedSkins.some(skin => skin.id === skinId)) {
                 button.innerText = "장착 해제";
                 button.setAttribute("onclick", `unSkin(${skinId})`);
             } else {
@@ -968,14 +952,14 @@ async function updateSkinButtons() {
                 button.setAttribute("onclick", `equipSkin(${skinId})`);
             }
         } else {
-            // ✅ 구매하지 않은 스킨은 "구매 필요" 버튼 표시
-            button.innerText = "구매 필요";
-            button.setAttribute("onclick", `alert('🚨 이 스킨을 구매해야 사용할 수 있습니다!')`);
+            button.innerText = "구매하기";
+            button.setAttribute("onclick", `buyItem(${skinId})`);
         }
     });
 
     console.log("✅ 스킨 버튼 업데이트 완료!");
 }
+
 
 
 // 장착하기 리스트
@@ -1133,7 +1117,6 @@ async function unSkin() {
     }
 }
 
-
 window.equipSkin = equipSkin;
 window.unSkin = unSkin;
 
@@ -1186,22 +1169,22 @@ async function loadPurchasedSkins() {
     }
 }
 
-
 async function displayDices() {
-    console.log("displayDices() 실행됨");
+    console.log("🎲 displayDices() 실행됨");
 
     const items = await loadItems();
     if (!items || items.length === 0) {
-        console.warn("아이템 데이터가 없습니다. JSON 파일을 확인하세요.");
+        console.warn("⚠️ 아이템 데이터가 없습니다. JSON 파일을 확인하세요.");
         return;
     }
 
-    const purchasedSkins = await loadPurchasedSkins();
-    console.log("✅ 최신 구매한 스킨 목록:", purchasedSkins);
+    // ✅ `localStorage`에서 구매한 스킨 정보 불러오기
+    let purchasedSkins = JSON.parse(localStorage.getItem("purchasedSkins")) || [];
+    console.log("✅ 로컬 저장소에서 불러온 구매한 스킨 목록:", purchasedSkins);
 
     const container = document.getElementById("diceList");
     if (!container) {
-        console.error("diceList 요소를 찾을 수 없음. HTML을 확인하세요.");
+        console.error("🚨 'diceList' 요소를 찾을 수 없음.");
         return;
     }
 
@@ -1228,12 +1211,8 @@ async function displayDices() {
         container.appendChild(card);
     }
 
-    console.log("주사위 리스트 최신화 완료");
+    console.log("✅ 주사위 리스트 최신화 완료");
 }
-
-
-
-
 
 // 🔹 주사위 굴리기
 async function rollDice() {
@@ -1341,14 +1320,29 @@ async function loadPurchaseHistory() {
         const purchasedData = await response.json();
         console.log("📦 구매한 스킨 데이터:", purchasedData);
 
-        if (!purchasedData.success) {
+        if (!purchasedData.success || !purchasedData.purchasedSkins) {
             console.error("🚨 구매한 스킨을 가져오지 못했습니다:", purchasedData.message);
             return;
         }
 
-        // 🛠 `items.json` & `items2.json` 불러오기
-        const items1 = await fetch("items.json").then(res => res.json());
-        const items2 = await fetch("items2.json").then(res => res.json());
+        // 🛠 구매한 스킨 ID 목록을 localStorage에 저장
+        localStorage.setItem("purchasedSkins", JSON.stringify(purchasedData.purchasedSkins));
+
+        // 🛠 `items.json` & `items2.json` 불러오기 (예외 처리 추가)
+        const items1 = await fetch("items.json")
+            .then(res => res.json())
+            .catch(() => {
+                console.error("🚨 items.json 로드 실패!");
+                return [];
+            });
+
+        const items2 = await fetch("items2.json")
+            .then(res => res.json())
+            .catch(() => {
+                console.error("🚨 items2.json 로드 실패!");
+                return [];
+            });
+
         const allItems = [...items1, ...items2]; // 🔥 모든 아이템 합치기
 
         // 🔹 ID → title 매칭 후 변환
@@ -1359,23 +1353,13 @@ async function loadPurchaseHistory() {
 
         console.log("✅ 변환된 스킨 목록:", purchasedTitles);
 
-        // 🛠 HTML 업데이트
-        const purchaseList = document.getElementById("purchaseList");
-        purchaseList.innerHTML = "";
-
-        if (purchasedTitles.length === 0) {
-            purchaseList.innerHTML = "<li>구매 내역이 없습니다.</li>";
-        } else {
-            purchasedTitles.forEach(title => {
-                const listItem = document.createElement("li");
-                listItem.textContent = `🎲 구매한 스킨: ${title}`;
-                purchaseList.appendChild(listItem);
-            });
-        }
+        // 🛠 UI 업데이트 함수 호출
+        updatePurchaseHistoryUI(purchasedTitles);
     } catch (error) {
         console.error(`🚨 구매한 스킨 API 호출 실패: ${error.message}`);
     }
 }
+
 
 async function debugPurchaseHistory() {
     if (!signer) {
